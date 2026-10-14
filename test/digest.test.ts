@@ -23,6 +23,21 @@ describe('run log reader', () => {
     expect(row.owner).toBe('—');
   });
 
+  it('keeps a job whose owner is already — (2026-10-29: 6 jobs, not 5)', () => {
+    const night = readNight('runs', '2026-10-29')!;
+    expect(night.rows.map((r) => r.job)).toEqual([
+      '—',
+      'digest/render',
+      'fixtures/refresh',
+      'lane/sync',
+      'notes/backup',
+      'rig/rotate-logs',
+    ]);
+    const placeholder = night.rows.find((r) => r.job === '—')!;
+    expect(placeholder.owner).toBe('—');
+    expect(placeholder.runs).toBe(1);
+  });
+
   it('last status wins, retries counted on their own', () => {
     const row = readNight('runs', '2026-10-28')!.rows.find((r) => r.job === 'fixtures/refresh')!;
     expect(row.last).toBe('ok');
