@@ -1,0 +1,129 @@
+name: test-writer
+
+# The test writer is the one agent that writes (docs/adr/0006). It wakes on every push to a
+# pull request in this repository, writes one test under test/, and commits it to that branch.
+# It never writes to main, and never touches src/, runs/ or .github/.
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  test-writer:
+    # Only for a branch in this repository (a fork pull request has no secrets), and never for
+    # the test writer's own commit, which would loop.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      MODEL_ENDPOINT: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+      MODEL_NAME: gemini-flash-lite-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --no-frozen-lockfile
+
+      - name: Write the test the change needs
+        env:
+          MODEL_KEY: ${{ secrets.MODEL_KEY }}
+        run: |
+          set -uo pipefail
+          work="$(mktemp -d)"
+
+          # A failed check leaves one line on the PR and stops.
+          stop() {
+            gh pr comment "$PR_NUMBER" --body "test writer stopped: $1" >/dev/null
+            echo "stopped: $1"
+            exit 0
+          }
+
+          [ -n "${MODEL_KEY:-}" ] || stop "no model key in the repository secrets (MODEL_KEY)."
+
+          git diff "$BASE_SHA...$HEAD_SHA" -- src test > "$work/diff.txt"
+          if [ ! -s "$work/diff.txt" ]; then
+            echo "no src or test change in this push; nothing to pin"
+            exit 0
+          fi
+
+          changed="$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- src | head -20)"
+          existing="$(ls test 2>/dev/null | head -20)"
+
+          {
+            echo "Instructions for you, the test writer:"
+            echo
+            cat docs/agents/test-writer.md
+            echo
+            echo "The pull request's diff against its base:"
+            echo
+            cat "$work/diff.txt"
+            echo
+            echo "Files the diff changes under src/:"
+            echo "$changed"
+            echo
+            echo "Test files that already exist:"
+            echo "$existing"
+            echo
+            echo "Reply with exactly two things and nothing else:"
+            echo "first line: FILE: test/<name>.test.ts"
+            echo "then one fenced code block holding the whole file."
+            echo "Write exactly one test file. Never change src/, runs/ or .github/."
+          } > "$work/prompt.txt"
+
+          jq -n --rawfile p "$work/prompt.txt" --arg m "$MODEL_NAME" \
+            '{model: $m, messages: [{role: "user", content: $p}]}' > "$work/request.json"
+
+          if ! curl -fsS -m 120 "$MODEL_ENDPOINT" \
+              -H "Authorization: Bearer $MODEL_KEY" \
+              -H 'Content-Type: application/json' \
+              -d @"$work/request.json" -o "$work/response.json"; then
+            stop "the model call failed."
+          fi
+
+          jq -r '.choices[0].message.content // empty' "$work/response.json" > "$work/reply.md"
+          [ -s "$work/reply.md" ] || stop "the model returned nothing."
+
+          target="$(sed -n 's/^FILE:[[:space:]]*//p' "$work/reply.md" | head -1)"
+          case "$target" in
+            test/*.test.ts|test/*.test.tsx) ;;
+            *) stop "the model named no test file under test/." ;;
+          esac
+
+          awk '/^```/{f=!f; next} f' "$work/reply.md" > "$work/new-test.txt"
+          [ -s "$work/new-test.txt" ] || stop "the model sent an empty test file."
+
+          mkdir -p "$(dirname "$target")"
+          cp "$work/new-test.txt" "$target"
+
+          # Only a test that passes is worth committing. A red test is the writer's mistake.
+          if ! pnpm test > "$work/test.log" 2>&1; then
+            git checkout -- . 2>/dev/null || true
+            rm -f "$target"
+            stop "the test it wrote does not pass."
+          fi
+
+          git config user.name "test-writer[bot]"
+          git config user.email "test-writer[bot]@users.noreply.github.com"
+          git add "$target"
+          git commit -m "test: pin the behaviour this pull request changes
+
+red on base $BASE_SHA · green on head $HEAD_SHA"
+          git push
+          echo "committed $target"

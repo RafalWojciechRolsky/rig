@@ -48,9 +48,11 @@ red on base <base sha> · green on head <head sha>
 
 ## This repo
 
-<!-- Stub: the part only someone who read the repo can fill. Fill it before the first run. -->
-
-- test runner and command: _TODO_
-- where tests live, how they are named: _TODO_
-- fixtures a test may read (read-only): _TODO_
-- what "fails on the base branch" means here, as a command: _TODO_
+- test runner and command: `pnpm test` (vitest). `pnpm typecheck` for types. Node 22 in CI.
+- where tests live, how they are named: `test/`, one file per behavior, `*.test.ts` for logic and
+  `*.test.tsx` for views. Read `test/digest.test.ts` for the shape.
+- fixtures a test may read (read-only): `runs/*.jsonl` are real nights. Read them, never write
+  them. A test that needs its own input writes it to a temp dir, as `test/digest.test.ts` does.
+- what "fails on the base branch" means here, as a command: put the base `src/` back under the
+  new test and watch it fail —
+  `git stash push -- src && pnpm test; git stash pop`. Red on base, green on head.
