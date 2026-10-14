@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -48,10 +49,10 @@ jobs:
           set -uo pipefail
           work="$(mktemp -d)"
 
-          # A failed check leaves one line on the PR and stops.
+          # The test writer stays quiet on the pull request: it either commits a test or says
+          # nothing. The pulse is the agent that talks on the PR.
           stop() {
-            gh pr comment "$PR_NUMBER" --body "test writer stopped: $1" >/dev/null
-            echo "stopped: $1"
+            echo "test writer stopped: $1"
             exit 0
           }
 
