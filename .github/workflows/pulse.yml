@@ -4,6 +4,10 @@ name: pulse
 # Rook asks on the pull request: `pulse? <phrase>`. The phrase is new every time.
 # This file decides what the pulse reads, what it may post, and when it stops.
 # The model decides what the comment says.
+#
+# The model key is a budget, so not everyone may spend it. The pulse answers Rook's ask and an
+# ask from someone who can already write to this repository. A stranger on this public repo can
+# leave `pulse? ...` and nothing happens: no run, no key spent.
 
 on:
   issue_comment:
@@ -16,15 +20,22 @@ permissions:
 
 jobs:
   pulse:
-    # Only on a pull request, and only when the ask starts with `pulse?`.
+    # A pull request, an ask that starts with `pulse?`, and an asker we trust with the key:
+    # Rook's app, or a login with write access here.
     if: >-
       github.event.issue.pull_request != null &&
-      startsWith(github.event.comment.body, 'pulse?')
+      startsWith(github.event.comment.body, 'pulse?') &&
+      (
+        github.event.comment.user.login == 'progrunner-rook[bot]' ||
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+      )
     runs-on: ubuntu-latest
     env:
       GH_REPO: ${{ github.repository }}
       PR_NUMBER: ${{ github.event.issue.number }}
       COMMENT_BODY: ${{ github.event.comment.body }}
+      COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+      COMMENT_ASSOCIATION: ${{ github.event.comment.author_association }}
       TRACKER_REPO: Jabi-s-Progrunner/rig
       MODEL_ENDPOINT: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
       MODEL_NAME: gemini-flash-lite-latest
@@ -48,6 +59,12 @@ jobs:
 
           phrase="$(printf '%s' "$COMMENT_BODY" | sed -n '1s/^pulse?[[:space:]]*//p')"
           [ -n "$phrase" ] || stop "the ask carried no phrase."
+
+          # The key is a budget. Say no before spending it, not after.
+          case "$COMMENT_AUTHOR:$COMMENT_ASSOCIATION" in
+            progrunner-rook\[bot\]:*|*:OWNER|*:MEMBER|*:COLLABORATOR) ;;
+            *) stop "the ask came from $COMMENT_AUTHOR, who cannot spend this repository's key." ;;
+          esac
 
           # What the pulse reads: this plan, what already happened, and the tracker.
           {
