@@ -53,6 +53,7 @@ red on base <base sha> · green on head <head sha>
   `*.test.tsx` for views. Read `test/digest.test.ts` for the shape.
 - fixtures a test may read (read-only): `runs/*.jsonl` are real nights. Read them, never write
   them. A test that needs its own input writes it to a temp dir, as `test/digest.test.ts` does.
-- what "fails on the base branch" means here, as a command: put the base `src/` back under the
-  new test and watch it fail —
-  `git stash push -- src && pnpm test; git stash pop`. Red on base, green on head.
+- what "fails on the base branch" means here, as a command: put the base `src/` under the new
+  test and watch it fail —
+  `BASE=$(git merge-base origin/main HEAD); git checkout $BASE -- src && pnpm test; git checkout HEAD -- src`.
+  Red on base, green on head. `git stash push -- src` only works while the fix is uncommitted.
